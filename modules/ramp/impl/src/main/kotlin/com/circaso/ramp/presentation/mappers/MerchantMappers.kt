@@ -260,6 +260,7 @@ fun MerchantOverview.toResponse() =
                     balance = Amounts.usdc(it.balanceMinor),
                     reserved = Amounts.usdc(it.reservedMinor),
                     free = Amounts.usdc(it.freeMinor),
+                    withdrawing = Amounts.usdc(it.withdrawingMinor),
                 )
             },
         payments =

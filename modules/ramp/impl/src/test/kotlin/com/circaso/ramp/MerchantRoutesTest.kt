@@ -1,17 +1,27 @@
 package com.circaso.ramp
 
+import com.circaso.integrations.api.CollectionCredentials
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.ramp.api.MerchantId
+import com.circaso.ramp.domain.models.PaymentAccountCommand
 import com.circaso.ramp.domain.models.Subject
+import com.circaso.ramp.domain.usecases.AddWithdrawalDestination
 import com.circaso.ramp.domain.usecases.GetTestPayout
 import com.circaso.ramp.domain.usecases.GetTopUp
+import com.circaso.ramp.domain.usecases.GetWithdrawal
 import com.circaso.ramp.domain.usecases.ListTopUps
+import com.circaso.ramp.domain.usecases.ListWithdrawalDestinations
+import com.circaso.ramp.domain.usecases.ListWithdrawals
+import com.circaso.ramp.domain.usecases.RemoveWithdrawalDestination
 import com.circaso.ramp.domain.usecases.StartTestPayout
 import com.circaso.ramp.domain.usecases.StartTopUp
+import com.circaso.ramp.domain.usecases.WithdrawFloat
 import com.circaso.ramp.presentation.controllers.merchantController
 import com.circaso.ramp.presentation.services.MerchantAuthService
 import com.circaso.ramp.presentation.services.MerchantService
+import com.circaso.ramp.presentation.services.WithdrawalService
 import com.circaso.shared.PhoneNumber
+import com.circaso.shared.Resource
 import com.circaso.web.installJson
 import com.circaso.web.installRequestId
 import com.circaso.web.installStatusPages
@@ -76,6 +86,15 @@ class MerchantRoutesTest {
             GetTopUp(ramp.topUps),
             ListTopUps(ramp.topUps),
         )
+    private val withdrawals =
+        WithdrawalService(
+            ListWithdrawalDestinations(ramp.floatWithdrawals),
+            AddWithdrawalDestination(ramp.floatWithdrawals),
+            RemoveWithdrawalDestination(ramp.floatWithdrawals),
+            WithdrawFloat(ramp.floatWithdrawals),
+            ListWithdrawals(ramp.floatWithdrawals),
+            GetWithdrawal(ramp.floatWithdrawals),
+        )
     private val base = "/v1/ramp/merchant"
 
     private fun ApplicationTestBuilder.serve() {
@@ -83,7 +102,7 @@ class MerchantRoutesTest {
             installRequestId()
             installJson()
             installStatusPages()
-            routing { route("/v1") { merchantController(auth, merchants) } }
+            routing { route("/v1") { merchantController(auth, merchants, withdrawals) } }
         }
     }
 
@@ -1055,5 +1074,82 @@ class MerchantRoutesTest {
             val refused =
                 client.put("$base/payments/webhook-secret") { json("""{"secret":"whsec_Zr8Lq2Vx7Tn4Kp9W"}""", session) }
             assertEquals("ramp.merchant_setup_incomplete", refused.envelope().text("code"))
+        }
+
+    @Test
+    fun `RM20 and RM21 save an address with the PIN, then withdraw to it once it is usable`() =
+        testApplication {
+            serve()
+            val account = PaymentAccountCommand(CollectionCredentials("Crynce-user", "Crynce-pass", "911"), "482913")
+            assertTrue(ramp.storePayments(ramp.crynce.merchantId, TESTNET, account) is Resource.Success)
+            val session = signIn("crynce@example.com")
+            val address = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+
+            val bad =
+                client.post("$base/withdrawal-addresses") {
+                    json("""{"address":"0x12","label":"Ledger","pin":"482913"}""", session)
+                }
+            assertEquals(HttpStatusCode.BadRequest, bad.status)
+            assertEquals("ramp.address_invalid" to "address", bad.envelope().text("code") to bad.field())
+
+            val saved =
+                client.post("$base/withdrawal-addresses") {
+                    json("""{"address":"${address.lowercase()}","label":"Ledger","pin":"482913"}""", session)
+                }
+            assertEquals(HttpStatusCode.OK, saved.status, saved.bodyAsText())
+            val dest = saved.data()
+            assertEquals(address to "false", dest.text("address") to dest.text("usable"))
+            val id = dest.text("destinationId")
+
+            val listed = client.get("$base/withdrawal-addresses") { header("X-Merchant-Session", session) }.data()
+            assertEquals("24", listed.text("delayHours"))
+            assertEquals(1, listed.getValue("addresses").jsonArray.size)
+
+            val early =
+                client.post("$base/withdrawals") {
+                    json("""{"amountMinor":"5000000","destinationId":"$id","pin":"482913"}""", session)
+                }
+            assertEquals(HttpStatusCode.Conflict, early.status)
+            assertEquals("ramp.destination_not_ready", early.envelope().text("code"))
+
+            ramp.clock.advance(24 * 3_600)
+            val later = signIn("crynce@example.com") // a day later: the first session lasted 12 hours
+            val sent =
+                client.post("$base/withdrawals") {
+                    header("Idempotency-Key", "w-1")
+                    json("""{"amountMinor":"5000000","destinationId":"$id","pin":"482913"}""", later)
+                }
+            assertEquals(HttpStatusCode.OK, sent.status, sent.bodyAsText())
+            val withdrawal = sent.data()
+            assertEquals("REQUESTED", withdrawal.text("state"))
+            assertEquals(Triple("USDC", "5000000", "5"), withdrawal.getValue("amount").amount())
+            assertEquals(address, withdrawal.getValue("destination").jsonObject.text("address"))
+
+            ramp.release()
+            ramp.treasury.settleAll()
+            ramp.release()
+            val read =
+                client
+                    .get("$base/withdrawals/${withdrawal.text("withdrawalId")}") {
+                        header("X-Merchant-Session", later)
+                    }.data()
+            assertEquals("COMPLETED", read.text("state"))
+            assertEquals("https://sepolia.basescan.org/tx/0xhash-tx-1", read.text("explorerUrl"))
+
+            val page = client.get("$base/withdrawals") { header("X-Merchant-Session", later) }.data()
+            assertEquals(1, page.getValue("withdrawals").jsonArray.size)
+            assertEquals(
+                "1",
+                page
+                    .getValue("limits")
+                    .jsonObject
+                    .getValue("min")
+                    .amount()
+                    .third,
+            )
+
+            val removed =
+                client.post("$base/withdrawal-addresses/$id/remove") { json("""{"pin":"482913"}""", later) }
+            assertEquals(HttpStatusCode.OK, removed.status, removed.bodyAsText())
         }
 }

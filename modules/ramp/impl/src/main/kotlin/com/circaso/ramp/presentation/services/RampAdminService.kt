@@ -18,6 +18,7 @@ import com.circaso.ramp.domain.models.Resolved
 import com.circaso.ramp.domain.models.SettingsChange
 import com.circaso.ramp.domain.models.StaffOrder
 import com.circaso.ramp.domain.models.StaffOrderFilter
+import com.circaso.ramp.domain.models.StaffWithdrawals
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.UserVerifications
 import com.circaso.ramp.domain.models.Verification
@@ -35,6 +36,7 @@ import com.circaso.ramp.domain.usecases.ListMerchants
 import com.circaso.ramp.domain.usecases.ListPreviewAccess
 import com.circaso.ramp.domain.usecases.ListReviewOrders
 import com.circaso.ramp.domain.usecases.ListStaffMerchantOrders
+import com.circaso.ramp.domain.usecases.ListStaffWithdrawals
 import com.circaso.ramp.domain.usecases.ResetMerchantVerification
 import com.circaso.ramp.domain.usecases.ResetVerification
 import com.circaso.ramp.domain.usecases.ResolveOrder
@@ -67,7 +69,14 @@ class RampAdminService(
     private val resetVerification: ResetVerification,
     private val resetMerchantVerificationUseCase: ResetMerchantVerification,
     private val resolveOrder: ResolveOrder,
+    private val listStaffWithdrawals: ListStaffWithdrawals,
 ) {
+    suspend fun withdrawals(
+        merchantId: MerchantId,
+        network: Network,
+        limit: Int,
+    ): Resource<StaffWithdrawals> = listStaffWithdrawals(merchantId, network, limit)
+
     suspend fun resolve(command: ResolveCommand): Resource<Resolved> = resolveOrder(command)
 
     suspend fun kycProviders(): Resource<List<String>> = listKycProviders()

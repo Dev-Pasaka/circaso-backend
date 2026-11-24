@@ -157,6 +157,13 @@ data class RampSettingsDto(
     val payoutWindowSeconds: Int = 0,
     val payoutFeeBands: List<RampPayoutFeeBandDto> = emptyList(),
     val payoutBalanceLowMinor: String = "0",
+    /**
+     * Float withdrawals (2026-11-24): hours before a merchant's new withdrawal address can be used (0 to 720), the
+     * smallest withdrawal and the daily cap per merchant ("0": none), both USDC minor units (6 decimals).
+     */
+    val withdrawDestinationDelayHours: Int = 24,
+    val withdrawMinMinor: String = "1000000",
+    val withdrawDailyMaxMinor: String = "0",
 )
 
 /** One band of the fallback payout fee table: a payout up to `upToMinor` KES cents (inclusive) costs `feeMinor`. */
@@ -210,6 +217,9 @@ data class UpdateRampSettingsRequest(
     val payoutWindowSeconds: Int? = null,
     val payoutFeeBands: List<RampPayoutFeeBandDto>? = null,
     val payoutBalanceLowMinor: String? = null,
+    val withdrawDestinationDelayHours: Int? = null,
+    val withdrawMinMinor: String? = null,
+    val withdrawDailyMaxMinor: String? = null,
 )
 
 /**
@@ -525,3 +535,37 @@ data class RampMerchantOrderDto(
 
 @Serializable
 data class RampMerchantOrdersResponse(val orders: List<RampMerchantOrderDto>, val nextCursor: String? = null)
+
+/** A float withdrawal for staff (2026-11-24); amounts as everywhere: `{ unit, amountMinor, amount }`. */
+@Serializable
+data class RampWithdrawalDto(
+    val withdrawalId: String,
+    val state: String,
+    val amount: RampAmountDto,
+    val blockchain: String,
+    val destinationAddress: String,
+    val destinationLabel: String,
+    val txHash: String?,
+    val explorerUrl: String?,
+    val failureReason: String?,
+    val createdAt: String,
+    val updatedAt: String,
+    val closedAt: String?,
+)
+
+@Serializable
+data class RampWithdrawalDestinationDto(
+    val destinationId: String,
+    val label: String,
+    val address: String,
+    val blockchain: String,
+    val createdAt: String,
+    val usableAt: String,
+    val removedAt: String?,
+)
+
+@Serializable
+data class RampMerchantWithdrawalsResponse(
+    val withdrawals: List<RampWithdrawalDto>,
+    val destinations: List<RampWithdrawalDestinationDto>,
+)

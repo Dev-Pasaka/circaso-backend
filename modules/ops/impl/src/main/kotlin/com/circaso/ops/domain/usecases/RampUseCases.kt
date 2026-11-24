@@ -21,6 +21,7 @@ import com.circaso.ramp.api.OpsRampResolved
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampSettingsChange
 import com.circaso.ramp.api.OpsRampUserVerification
+import com.circaso.ramp.api.OpsRampWithdrawals
 import com.circaso.ramp.api.RampAdmin
 import com.circaso.ramp.api.RampOrderId
 import com.circaso.shared.Network
@@ -130,6 +131,13 @@ class UpdateRampSettings(private val ramp: RampAdmin, private val trail: AuditTr
             parts += "payoutFeeBands changed"
         }
         changed("payoutBalanceLowMinor", before.payoutBalanceLowMinor, after.payoutBalanceLowMinor)
+        changed(
+            "withdrawDestinationDelayHours",
+            before.withdrawDestinationDelayHours,
+            after.withdrawDestinationDelayHours,
+        )
+        changed("withdrawMinMinor", before.withdrawMinMinor, after.withdrawMinMinor)
+        changed("withdrawDailyMaxMinor", before.withdrawDailyMaxMinor, after.withdrawDailyMaxMinor)
         return parts.joinToString("; ")
     }
 }
@@ -203,6 +211,15 @@ class GetRampMerchantSummary(private val ramp: RampAdmin) {
 class GetRampMerchantOrders(private val ramp: RampAdmin) {
     suspend operator fun invoke(query: RampMerchantOrdersQuery, limit: Int): Resource<List<OpsRampMerchantOrder>> =
         ramp.merchantOrders(query.merchantId, query.network, query.period, query.state, query.after, limit)
+}
+
+/** A merchant's float withdrawals and saved withdrawal addresses on a network, newest first (2026-11-24). */
+class GetRampMerchantWithdrawals(private val ramp: RampAdmin) {
+    suspend operator fun invoke(
+        merchantId: MerchantId,
+        network: Network,
+        limit: Int,
+    ): Resource<OpsRampWithdrawals> = ramp.merchantWithdrawals(merchantId, network, limit)
 }
 
 /** A user's ramp verification in each provider environment, and their block. The person must exist. */

@@ -7,6 +7,7 @@ import com.circaso.ops.domain.usecases.DecideRampMerchant
 import com.circaso.ops.domain.usecases.GetRampBlocks
 import com.circaso.ops.domain.usecases.GetRampMerchantOrders
 import com.circaso.ops.domain.usecases.GetRampMerchantSummary
+import com.circaso.ops.domain.usecases.GetRampMerchantWithdrawals
 import com.circaso.ops.domain.usecases.GetRampMerchants
 import com.circaso.ops.domain.usecases.GetRampOverview
 import com.circaso.ops.domain.usecases.GetRampPreviewAccess
@@ -33,6 +34,7 @@ import com.circaso.ramp.api.OpsRampResolved
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampSettingsChange
 import com.circaso.ramp.api.OpsRampUserVerification
+import com.circaso.ramp.api.OpsRampWithdrawals
 import com.circaso.ramp.api.RampOrderId
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
@@ -57,7 +59,14 @@ class RampService(
     private val resetRampUserVerification: ResetRampUserVerification,
     private val resetRampMerchantVerification: ResetRampMerchantVerification,
     private val resolveRampOrder: ResolveRampOrder,
+    private val getRampMerchantWithdrawals: GetRampMerchantWithdrawals,
 ) {
+    suspend fun merchantWithdrawals(
+        merchantId: MerchantId,
+        network: Network,
+        limit: Int,
+    ): Resource<OpsRampWithdrawals> = getRampMerchantWithdrawals(merchantId, network, limit)
+
     suspend fun resolve(
         actor: Actor,
         orderId: RampOrderId,

@@ -9,6 +9,7 @@ import com.circaso.ops.presentation.dto.RampBlocksResponse
 import com.circaso.ops.presentation.dto.RampMerchantDto
 import com.circaso.ops.presentation.dto.RampMerchantOrdersResponse
 import com.circaso.ops.presentation.dto.RampMerchantSummaryResponse
+import com.circaso.ops.presentation.dto.RampMerchantWithdrawalsResponse
 import com.circaso.ops.presentation.dto.RampMerchantsResponse
 import com.circaso.ops.presentation.dto.RampOrdersResponse
 import com.circaso.ops.presentation.dto.RampOverviewResponse
@@ -252,6 +253,26 @@ private fun Route.rampInsights(ramp: RampService, settings: OpsSettings) {
                     "`payment_failed`, `prompt_failed` (the provider couldn't be reached), `prompt_refused` and " +
                     "`provider_balance` (the provider refused the merchant's prompt; the buyer was passed to the " +
                     "next merchant), `merchant_offline`, and the review reasons. $SAME_FIGURES",
+        )
+
+        get("withdrawals") {
+            val result =
+                parseMerchantId(call.parameters["merchantId"]).flatMap { merchantId ->
+                    requiredNetwork().flatMap { network ->
+                        call.pageLimit(settings).flatMap { ramp.merchantWithdrawals(merchantId, network, it) }
+                    }
+                }
+            call.respondDefault(result.toDefaultResponse { it.toResponse() })
+        }.docs<NoBody, RampMerchantWithdrawalsResponse>(
+            "OPS · A ramp merchant's float withdrawals and withdrawal addresses",
+            TAG_RAMP,
+            listOf(MERCHANT_NOT_FOUND, MALFORMED, FORBIDDEN),
+            notes =
+                "${roles("FINANCE", "ADMIN")} `?network=MAINNET|TESTNET` is required; `?limit=` bounds the " +
+                    "withdrawals (newest first). `state`: REQUESTED (reserved, waiting for the ops server to send " +
+                    "it), SENT, COMPLETED, FAILED (`failureReason`: `refused`, `failed_on_chain`, `float_short`, " +
+                    "`wallet_missing`; the amount went back to the free float). `destinations` are every address " +
+                    "the merchant saved on the network, removed ones too: each is usable from `usableAt`.",
         )
     }
 }

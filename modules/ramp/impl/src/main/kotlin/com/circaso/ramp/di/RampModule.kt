@@ -48,6 +48,9 @@ import com.circaso.ramp.data.repositories.StatementRepositoryImpl
 import com.circaso.ramp.data.repositories.TestPayoutRepositoryImpl
 import com.circaso.ramp.data.repositories.TopUpRepositoryImpl
 import com.circaso.ramp.data.repositories.VerificationRepositoryImpl
+import com.circaso.ramp.data.repositories.WithdrawalDestinationRepositoryImpl
+import com.circaso.ramp.data.repositories.WithdrawalRepositoryImpl
+import com.circaso.ramp.data.support.Eip55Addresses
 import com.circaso.ramp.data.support.EnvelopeVault
 import com.circaso.ramp.data.support.HmacIdentityKeys
 import com.circaso.ramp.data.support.HttpPromptTransport
@@ -79,7 +82,10 @@ import com.circaso.ramp.data.tables.SettingsTable
 import com.circaso.ramp.data.tables.TestPayoutsTable
 import com.circaso.ramp.data.tables.TopUpsTable
 import com.circaso.ramp.data.tables.VerificationsTable
+import com.circaso.ramp.data.tables.WithdrawalDestinationsTable
+import com.circaso.ramp.data.tables.WithdrawalsTable
 import com.circaso.ramp.domain.ports.CredentialVault
+import com.circaso.ramp.domain.ports.EvmAddresses
 import com.circaso.ramp.domain.ports.FrameSender
 import com.circaso.ramp.domain.ports.IdentityKeys
 import com.circaso.ramp.domain.ports.KesFloat
@@ -121,11 +127,14 @@ import com.circaso.ramp.domain.repositories.StatementRepository
 import com.circaso.ramp.domain.repositories.TestPayoutRepository
 import com.circaso.ramp.domain.repositories.TopUpRepository
 import com.circaso.ramp.domain.repositories.VerificationRepository
+import com.circaso.ramp.domain.repositories.WithdrawalDestinationRepository
+import com.circaso.ramp.domain.repositories.WithdrawalRepository
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.EngineBook
 import com.circaso.ramp.domain.support.EngineFacts
 import com.circaso.ramp.domain.support.FeeSweeps
 import com.circaso.ramp.domain.support.FloatWallets
+import com.circaso.ramp.domain.support.FloatWithdrawals
 import com.circaso.ramp.domain.support.Gates
 import com.circaso.ramp.domain.support.MerchantInsights
 import com.circaso.ramp.domain.support.MerchantStatsBook
@@ -147,6 +156,8 @@ import com.circaso.ramp.domain.support.SaleRefunds
 import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.ramp.domain.support.TestPayouts
 import com.circaso.ramp.domain.support.Verifications
+import com.circaso.ramp.domain.support.WithdrawalSends
+import com.circaso.ramp.domain.usecases.AddWithdrawalDestination
 import com.circaso.ramp.domain.usecases.AnnounceVerifications
 import com.circaso.ramp.domain.usecases.ApplyAsMerchant
 import com.circaso.ramp.domain.usecases.BlockUser
@@ -174,6 +185,7 @@ import com.circaso.ramp.domain.usecases.GetTestPayout
 import com.circaso.ramp.domain.usecases.GetTopUp
 import com.circaso.ramp.domain.usecases.GetUserKyc
 import com.circaso.ramp.domain.usecases.GetUserVerifications
+import com.circaso.ramp.domain.usecases.GetWithdrawal
 import com.circaso.ramp.domain.usecases.GoOffline
 import com.circaso.ramp.domain.usecases.GoOnline
 import com.circaso.ramp.domain.usecases.HandleKycNotification
@@ -191,9 +203,13 @@ import com.circaso.ramp.domain.usecases.ListPreviewAccess
 import com.circaso.ramp.domain.usecases.ListReviewOrders
 import com.circaso.ramp.domain.usecases.ListRoutingDecisions
 import com.circaso.ramp.domain.usecases.ListStaffMerchantOrders
+import com.circaso.ramp.domain.usecases.ListStaffWithdrawals
 import com.circaso.ramp.domain.usecases.ListTopUps
+import com.circaso.ramp.domain.usecases.ListWithdrawalDestinations
+import com.circaso.ramp.domain.usecases.ListWithdrawals
 import com.circaso.ramp.domain.usecases.PruneRoutingLog
 import com.circaso.ramp.domain.usecases.ReleaseOrders
+import com.circaso.ramp.domain.usecases.RemoveWithdrawalDestination
 import com.circaso.ramp.domain.usecases.ReplayFrames
 import com.circaso.ramp.domain.usecases.RequestSignInCode
 import com.circaso.ramp.domain.usecases.ResetMerchantVerification
@@ -225,6 +241,7 @@ import com.circaso.ramp.domain.usecases.UpdateEngineSettings
 import com.circaso.ramp.domain.usecases.UpdatePricingSettings
 import com.circaso.ramp.domain.usecases.UpdateSettings
 import com.circaso.ramp.domain.usecases.VerifySignInCode
+import com.circaso.ramp.domain.usecases.WithdrawFloat
 import com.circaso.ramp.presentation.api.RampAdminImpl
 import com.circaso.ramp.presentation.api.RampCollectionNotifications
 import com.circaso.ramp.presentation.api.RampEngineAdminImpl
@@ -243,6 +260,7 @@ import com.circaso.ramp.presentation.services.RampEventsService
 import com.circaso.ramp.presentation.services.RampOpsJobsService
 import com.circaso.ramp.presentation.services.RampRatesService
 import com.circaso.ramp.presentation.services.RampService
+import com.circaso.ramp.presentation.services.WithdrawalService
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.Network
 import com.circaso.shared.RealtimeModule
@@ -286,6 +304,8 @@ internal val rampDatabaseSpec =
                 PayoutHoldsTable,
                 TestPayoutsTable,
                 TopUpsTable,
+                WithdrawalDestinationsTable,
+                WithdrawalsTable,
             ),
         migrationsLocation = "classpath:db/ramp",
         outbox = true,
@@ -349,6 +369,9 @@ fun rampModule(config: Config): Module =
         single<PayoutHoldRepository> { PayoutHoldRepositoryImpl(get(named("ramp.database"))) }
         single<TestPayoutRepository> { TestPayoutRepositoryImpl(get(named("ramp.database"))) }
         single<TopUpRepository> { TopUpRepositoryImpl(get(named("ramp.database"))) }
+        single<WithdrawalDestinationRepository> { WithdrawalDestinationRepositoryImpl(get(named("ramp.database"))) }
+        single<WithdrawalRepository> { WithdrawalRepositoryImpl(get(named("ramp.database"))) }
+        single<EvmAddresses> { Eip55Addresses() }
         single<ReservationRepository> { ReservationRepositoryImpl(get(named("ramp.database"))) }
         single<CommissionRepository> { CommissionRepositoryImpl(get(named("ramp.database"))) }
         single<SettlementRepository> { SettlementRepositoryImpl(get(named("ramp.database"))) }
@@ -470,6 +493,24 @@ fun rampModule(config: Config): Module =
         single { FloatWallets(get(), get(), get(), get(), get(), clock) }
         single { FeeSweeps(get(), get(), get(), get(), get(), get(), get(), clock) }
         single {
+            FloatWithdrawals(
+                merchants = get(),
+                wallets = get(),
+                credentials = get(),
+                pins = get(),
+                destinations = get(),
+                withdrawals = get(),
+                reservations = get(),
+                commissions = get(),
+                float = get(),
+                settings = get(),
+                addresses = get(),
+                transactor = get(),
+                clock = clock,
+            )
+        }
+        single { WithdrawalSends(get(), get(), get(), get(), get(), get(), clock) }
+        single {
             MerchantViews(
                 get(),
                 get(),
@@ -519,6 +560,14 @@ fun rampModule(config: Config): Module =
         single { StartTestPayout(get()) }
         single { GetTestPayout(get()) }
         single { StartTopUp(get()) }
+        single { ListWithdrawalDestinations(get()) }
+        single { AddWithdrawalDestination(get()) }
+        single { RemoveWithdrawalDestination(get()) }
+        single { WithdrawFloat(get()) }
+        single { ListWithdrawals(get()) }
+        single { GetWithdrawal(get()) }
+        single { ListStaffWithdrawals(get(), get(), get()) }
+        single { WithdrawalService(get(), get(), get(), get(), get(), get()) }
         single { GetTopUp(get()) }
         single { ListTopUps(get()) }
         single { HandlePaymentCallback(get(), get(), get(), get(), get()) }
@@ -570,7 +619,7 @@ fun rampModule(config: Config): Module =
         single { SetMerchantOffers(get(), get()) }
         single { PruneRoutingLog(get(), get(), clock) }
         // The treasury only the ops process has: Circle's where custody is Circle, the named stand-in otherwise.
-        single { ReleaseOrders(treasury(), get(), get(), get(), clock, get()) }
+        single { ReleaseOrders(treasury(), get(), get(), get(), clock, get(), get()) }
         single { SettleFees(treasury(), get()) }
 
         // presentation
@@ -643,6 +692,7 @@ fun rampModule(config: Config): Module =
                 resetVerification = get(),
                 resetMerchantVerificationUseCase = get(),
                 resolveOrder = get(),
+                listStaffWithdrawals = get(),
             )
         }
         single<RouteContributor>(named("ramp.routes")) {
@@ -651,7 +701,7 @@ fun rampModule(config: Config): Module =
             val merchants = get<MerchantService>()
             RouteContributor { route ->
                 route.rampController(ramp)
-                route.merchantController(auth, merchants)
+                route.merchantController(auth, merchants, get())
             }
         }
         single<Ramp> { RampImpl(get()) }

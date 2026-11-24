@@ -38,6 +38,9 @@ object SettingsTable : Table("ramp.settings") {
     val payoutWindowSeconds = integer("payout_window_seconds").default(1_800)
     val payoutFeeBands = text("payout_fee_bands").default("[]")
     val payoutBalanceLowMinor = long("payout_balance_low_minor").default(100_000)
+    val withdrawDestinationDelayHours = integer("withdraw_destination_delay_hours").default(24)
+    val withdrawMinMinor = long("withdraw_min_minor").default(1_000_000)
+    val withdrawDailyMaxMinor = long("withdraw_daily_max_minor").default(0)
     val walletSetId = text("wallet_set_id").nullable()
     val updatedBy = text("updated_by").nullable()
     val updatedAt = timestamp("updated_at")
@@ -448,4 +451,41 @@ object PricingSettingsTable : Table("ramp.pricing_settings") {
     val reason = text("reason").nullable()
     val updatedAt = timestamp("updated_at")
     override val primaryKey = PrimaryKey(network)
+}
+
+/** A merchant's saved withdrawal address on one network (V13); usable from [usableAt], kept when removed. */
+object WithdrawalDestinationsTable : Table("ramp.withdrawal_destinations") {
+    val destinationId = javaUUID("destination_id")
+    val merchantId = javaUUID("merchant_id")
+    val network = text("network")
+    val blockchain = text("blockchain")
+    val address = text("address")
+    val label = text("label")
+    val createdAt = timestamp("created_at")
+    val usableAt = timestamp("usable_at")
+    val removedAt = timestamp("removed_at").nullable()
+    override val primaryKey = PrimaryKey(destinationId)
+}
+
+/** A merchant's withdrawal of float (V13): `REQUESTED → SENT → COMPLETED | FAILED`. */
+object WithdrawalsTable : Table("ramp.withdrawals") {
+    val withdrawalId = javaUUID("withdrawal_id")
+    val merchantId = javaUUID("merchant_id")
+    val network = text("network")
+    val blockchain = text("blockchain")
+    val destinationId = javaUUID("destination_id")
+    val destinationAddress = text("destination_address")
+    val destinationLabel = text("destination_label")
+    val amountMinor = long("amount_minor")
+    val asset = text("asset")
+    val state = text("state")
+    val idempotencyKey = text("idempotency_key").nullable()
+    val custodyTxId = text("custody_tx_id").nullable()
+    val txHash = text("tx_hash").nullable()
+    val failureReason = text("failure_reason").nullable()
+    val createdAt = timestamp("created_at")
+    val updatedAt = timestamp("updated_at")
+    val sentAt = timestamp("sent_at").nullable()
+    val closedAt = timestamp("closed_at").nullable()
+    override val primaryKey = PrimaryKey(withdrawalId)
 }

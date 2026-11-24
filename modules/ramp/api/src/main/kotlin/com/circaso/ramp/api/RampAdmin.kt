@@ -150,6 +150,12 @@ data class OpsRampSettings(
     val payoutFeeBands: List<OpsPayoutFeeBand>? = null,
     /** Below this payout balance a merchant's portal flags `payout_balance_low`, KES minor units; 0: never. */
     val payoutBalanceLowMinor: Long? = null,
+    /** Hours before a merchant's new withdrawal address can be used (0 to 720); null on an update: unchanged. */
+    val withdrawDestinationDelayHours: Int? = null,
+    /** The smallest float withdrawal, USDC minor units. */
+    val withdrawMinMinor: Long? = null,
+    /** The most a merchant may withdraw in a Nairobi day, USDC minor units; 0: no cap. */
+    val withdrawDailyMaxMinor: Long? = null,
 )
 
 /** One band of staff's payout fee table: an amount up to [upToMinor] (inclusive) costs [feeMinor]. KES minor units. */
@@ -286,6 +292,16 @@ interface RampAdmin {
         limit: Int,
     ): Resource<List<OpsRampMerchantOrder>>
 
+    /**
+     * The merchant's float withdrawals on [network], newest first (at most [limit]), and every withdrawal address they
+     * saved there, removed ones too (2026-11-24). `ramp.merchant_not_found` when there is no such merchant.
+     */
+    suspend fun merchantWithdrawals(
+        merchantId: MerchantId,
+        network: Network,
+        limit: Int,
+    ): Resource<OpsRampWithdrawals>
+
     /** A user's ramp verification in each provider environment, and their block. Someone unknown has neither. */
     suspend fun userVerification(userId: UserId): OpsRampUserVerification
 
@@ -363,3 +379,36 @@ object RampOrderStates {
             "REFUNDED",
         )
 }
+
+/** One merchant's float withdrawals and saved addresses on a network, for staff (2026-11-24). */
+data class OpsRampWithdrawals(
+    val withdrawals: List<OpsRampWithdrawal>,
+    val destinations: List<OpsRampWithdrawalDestination>,
+)
+
+/** A float withdrawal: `REQUESTED`, `SENT`, `COMPLETED` or `FAILED` (with [failureReason]); amounts in USDC. */
+data class OpsRampWithdrawal(
+    val withdrawalId: UUID,
+    val state: String,
+    val amount: RampAmount,
+    val blockchain: String,
+    val destinationAddress: String,
+    val destinationLabel: String,
+    val txHash: String?,
+    val explorerUrl: String?,
+    val failureReason: String?,
+    val createdAt: Instant,
+    val updatedAt: Instant,
+    val closedAt: Instant?,
+)
+
+/** An address a merchant saved: usable from [usableAt]; [removedAt] once they removed it. */
+data class OpsRampWithdrawalDestination(
+    val destinationId: UUID,
+    val label: String,
+    val address: String,
+    val blockchain: String,
+    val createdAt: Instant,
+    val usableAt: Instant,
+    val removedAt: Instant?,
+)

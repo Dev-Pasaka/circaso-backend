@@ -58,6 +58,7 @@ private const val CONSUMED = "CONSUMED"
 private const val RELEASED = "RELEASED"
 private const val FLOAT = "FLOAT"
 private const val HOLD = "HOLD"
+private const val WITHDRAWAL = "WITHDRAWAL"
 
 class ReservationRepositoryImpl(private val database: Database) : ReservationRepository {
     override suspend fun openTotal(merchantId: MerchantId, network: Network): Long =
@@ -120,14 +121,60 @@ class ReservationRepositoryImpl(private val database: Database) : ReservationRep
 
     override suspend fun consume(orderId: RampOrderId, at: Instant): Boolean = close(orderId, CONSUMED, at)
 
+    override suspend fun reserveWithdrawal(
+        withdrawalId: UUID,
+        merchantId: MerchantId,
+        network: Network,
+        amountMinor: Long,
+        at: Instant,
+    ) {
+        database.tx("reservations.reserve-withdrawal") {
+            ReservationsTable.insertIgnore {
+                it[orderId] = withdrawalId
+                it[ReservationsTable.merchantId] = merchantId.value
+                it[ReservationsTable.network] = network.name
+                it[ReservationsTable.amountMinor] = amountMinor
+                it[asset] = RampSettings.ASSET
+                it[kind] = WITHDRAWAL
+                it[state] = OPEN
+                it[createdAt] = at
+            }
+        }
+    }
+
+    override suspend fun closeWithdrawal(
+        withdrawalId: UUID,
+        consumed: Boolean,
+        at: Instant,
+    ): Boolean = closeRow(withdrawalId, if (consumed) CONSUMED else RELEASED, at)
+
+    override suspend fun withdrawingTotal(merchantId: MerchantId, network: Network): Long =
+        database.tx("reservations.withdrawing-total") {
+            val total = ReservationsTable.amountMinor.sum()
+            ReservationsTable
+                .select(total)
+                .where {
+                    (ReservationsTable.merchantId eq merchantId.value) and
+                        (ReservationsTable.network eq network.name) and
+                        (ReservationsTable.kind eq WITHDRAWAL) and
+                        (ReservationsTable.state eq OPEN)
+                }.single()[total] ?: 0
+        }
+
     private suspend fun close(
         orderId: RampOrderId,
+        to: String,
+        at: Instant,
+    ): Boolean = closeRow(orderId.value, to, at)
+
+    private suspend fun closeRow(
+        id: UUID,
         to: String,
         at: Instant,
     ): Boolean =
         database.tx("reservations.close") {
             ReservationsTable.update({
-                (ReservationsTable.orderId eq orderId.value) and (ReservationsTable.state eq OPEN)
+                (ReservationsTable.orderId eq id) and (ReservationsTable.state eq OPEN)
             }) {
                 it[state] = to
                 it[closedAt] = at

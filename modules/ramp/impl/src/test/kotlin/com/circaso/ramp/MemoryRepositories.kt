@@ -57,6 +57,9 @@ import com.circaso.ramp.domain.models.Verification
 import com.circaso.ramp.domain.models.VerificationChange
 import com.circaso.ramp.domain.models.VerificationStatus
 import com.circaso.ramp.domain.models.VerifiedOutcome
+import com.circaso.ramp.domain.models.Withdrawal
+import com.circaso.ramp.domain.models.WithdrawalDestination
+import com.circaso.ramp.domain.models.WithdrawalState
 import com.circaso.ramp.domain.repositories.BlockRepository
 import com.circaso.ramp.domain.repositories.CommissionRepository
 import com.circaso.ramp.domain.repositories.CredentialRepository
@@ -81,6 +84,8 @@ import com.circaso.ramp.domain.repositories.StatementRepository
 import com.circaso.ramp.domain.repositories.TestPayoutRepository
 import com.circaso.ramp.domain.repositories.TopUpRepository
 import com.circaso.ramp.domain.repositories.VerificationRepository
+import com.circaso.ramp.domain.repositories.WithdrawalDestinationRepository
+import com.circaso.ramp.domain.repositories.WithdrawalRepository
 import com.circaso.ramp.domain.support.Periods
 import com.circaso.ramp.domain.support.Stats
 import com.circaso.shared.Network
@@ -701,9 +706,156 @@ class MemoryReservations : ReservationRepository {
 
     override suspend fun consume(orderId: RampOrderId, at: Instant) = close(orderId, "CONSUMED")
 
+    override suspend fun reserveWithdrawal(
+        withdrawalId: UUID,
+        merchantId: MerchantId,
+        network: Network,
+        amountMinor: Long,
+        at: Instant,
+    ) {
+        rows.putIfAbsent(RampOrderId(withdrawalId), Row(merchantId, network, amountMinor, "OPEN", "WITHDRAWAL"))
+    }
+
+    override suspend fun closeWithdrawal(
+        withdrawalId: UUID,
+        consumed: Boolean,
+        at: Instant,
+    ) = close(RampOrderId(withdrawalId), if (consumed) "CONSUMED" else "RELEASED")
+
+    override suspend fun withdrawingTotal(merchantId: MerchantId, network: Network) =
+        rows.values
+            .filter { it.merchantId == merchantId && it.network == network && it.state == "OPEN" }
+            .filter { it.kind == "WITHDRAWAL" }
+            .sumOf { it.amountMinor }
+
     private fun close(orderId: RampOrderId, to: String): Boolean {
         val row = rows[orderId]?.takeIf { it.state == "OPEN" } ?: return false
         row.state = to
+        return true
+    }
+}
+
+/** Saved withdrawal addresses in memory: one live row per merchant, network and address (2026-11-24). */
+class MemoryWithdrawalDestinations : WithdrawalDestinationRepository {
+    val rows = linkedMapOf<UUID, WithdrawalDestination>()
+
+    override suspend fun insert(destination: WithdrawalDestination): Boolean {
+        val taken =
+            rows.values.any {
+                it.merchantId == destination.merchantId && it.network == destination.network &&
+                    it.removedAt == null && it.address.equals(destination.address, ignoreCase = true)
+            }
+        if (taken) return false
+        rows[destination.destinationId] = destination
+        return true
+    }
+
+    override suspend fun find(destinationId: UUID) = rows[destinationId]
+
+    override suspend fun live(merchantId: MerchantId, network: Network) =
+        rows.values
+            .filter { it.merchantId == merchantId && it.network == network && it.removedAt == null }
+            .sortedByDescending { it.createdAt }
+
+    override suspend fun all(
+        merchantId: MerchantId,
+        network: Network,
+        limit: Int,
+    ) = rows.values
+        .filter { it.merchantId == merchantId && it.network == network }
+        .sortedByDescending { it.createdAt }
+        .take(limit)
+
+    override suspend fun remove(destinationId: UUID, at: Instant): Boolean {
+        val row = rows[destinationId]?.takeIf { it.removedAt == null } ?: return false
+        rows[destinationId] = row.copy(removedAt = at)
+        return true
+    }
+}
+
+/** Float withdrawals in memory, moved only from the states the table allows. */
+class MemoryWithdrawals : WithdrawalRepository {
+    val rows = linkedMapOf<UUID, Withdrawal>()
+
+    override suspend fun insert(withdrawal: Withdrawal): Boolean {
+        val key = withdrawal.idempotencyKey
+        if (key != null && rows.values.any { it.merchantId == withdrawal.merchantId && it.idempotencyKey == key }) {
+            return false
+        }
+        rows[withdrawal.withdrawalId] = withdrawal
+        return true
+    }
+
+    override suspend fun find(withdrawalId: UUID) = rows[withdrawalId]
+
+    override suspend fun byKey(merchantId: MerchantId, idempotencyKey: String) =
+        rows.values.firstOrNull { it.merchantId == merchantId && it.idempotencyKey == idempotencyKey }
+
+    override suspend fun page(
+        merchantId: MerchantId,
+        network: Network,
+        limit: Int,
+        before: UUID?,
+    ) = rows.values
+        .filter { it.merchantId == merchantId && it.network == network }
+        .filter { before == null || it.withdrawalId < before }
+        .sortedByDescending { it.withdrawalId }
+        .take(limit)
+
+    override suspend fun open(network: Network, limit: Int) =
+        rows.values
+            .filter { it.network == network && it.state.isOpen }
+            .sortedBy { it.updatedAt }
+            .take(limit)
+
+    override suspend fun totalSince(
+        merchantId: MerchantId,
+        network: Network,
+        since: Instant,
+    ) = rows.values
+        .filter { it.merchantId == merchantId && it.network == network }
+        .filter { it.state != WithdrawalState.FAILED && !it.createdAt.isBefore(since) }
+        .sumOf { it.amountMinor }
+
+    override suspend fun sent(
+        withdrawalId: UUID,
+        custodyTxId: String,
+        at: Instant,
+    ) = move(withdrawalId, setOf(WithdrawalState.REQUESTED)) {
+        it.copy(state = WithdrawalState.SENT, custodyTxId = custodyTxId, sentAt = at, updatedAt = at)
+    }
+
+    override suspend fun noteHash(
+        withdrawalId: UUID,
+        txHash: String,
+        at: Instant,
+    ) {
+        move(withdrawalId, setOf(WithdrawalState.SENT)) { if (it.txHash == null) it.copy(txHash = txHash) else it }
+    }
+
+    override suspend fun complete(
+        withdrawalId: UUID,
+        txHash: String?,
+        at: Instant,
+    ) = move(withdrawalId, setOf(WithdrawalState.SENT)) {
+        it.copy(state = WithdrawalState.COMPLETED, txHash = txHash ?: it.txHash, updatedAt = at, closedAt = at)
+    }
+
+    override suspend fun fail(
+        withdrawalId: UUID,
+        reason: String,
+        at: Instant,
+    ) = move(withdrawalId, setOf(WithdrawalState.REQUESTED, WithdrawalState.SENT)) {
+        it.copy(state = WithdrawalState.FAILED, failureReason = reason, updatedAt = at, closedAt = at)
+    }
+
+    private fun move(
+        withdrawalId: UUID,
+        from: Set<WithdrawalState>,
+        change: (Withdrawal) -> Withdrawal,
+    ): Boolean {
+        val row = rows[withdrawalId]?.takeIf { it.state in from } ?: return false
+        rows[withdrawalId] = change(row)
         return true
     }
 }

@@ -78,7 +78,16 @@ data class RampSettings(
     val payoutFeeBands: List<PayoutFeeBand> = emptyList(),
     /** Below this payout balance a merchant's portal says `payout_balance_low` (KES minor units; 0: never). */
     val payoutBalanceLowMinor: Long = DEFAULT_PAYOUT_BALANCE_LOW_MINOR,
+    /** How long a merchant's new withdrawal address waits before it can be withdrawn to (2026-11-24); 0 to 720. */
+    val withdrawDestinationDelayHours: Int = DEFAULT_WITHDRAW_DESTINATION_DELAY_HOURS,
+    /** The smallest float withdrawal, USDC minor units. */
+    val withdrawMinMinor: Long = DEFAULT_WITHDRAW_MIN_MINOR,
+    /** The most a merchant may withdraw in a Nairobi day, USDC minor units; 0: no cap. */
+    val withdrawDailyMaxMinor: Long = 0,
 ) {
+    /** The cooling-off delay of a new withdrawal address. */
+    val withdrawDestinationDelay: Duration get() = Duration.ofHours(withdrawDestinationDelayHours.toLong())
+
     val quoteLifetime: Duration get() = Duration.ofSeconds(quoteSeconds.toLong())
 
     /** How long an unpaid prompt keeps its float. */
@@ -131,6 +140,13 @@ data class RampSettings(
 
         /** KES 1 000: a few sales' worth. */
         const val DEFAULT_PAYOUT_BALANCE_LOW_MINOR = 100_000L
+
+        /** A day: long enough for a merchant to notice an address they didn't add (the email, the portal). */
+        const val DEFAULT_WITHDRAW_DESTINATION_DELAY_HOURS = 24
+        const val MAX_WITHDRAW_DESTINATION_DELAY_HOURS = 720
+
+        /** 1 USDC. */
+        const val DEFAULT_WITHDRAW_MIN_MINOR = 1_000_000L
 
         /** The portal page a merchant lands on after the provider's hosted check; it reads RM2 for the outcome. */
         const val MERCHANT_KYC_CALLBACK_PATH = "/kyc/done"

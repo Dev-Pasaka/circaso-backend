@@ -37,7 +37,13 @@ data class MerchantStepsDto(
 data class MerchantWalletDto(val blockchain: String, val address: String)
 
 @Serializable
-data class MerchantFloatDto(val balance: RampAmount, val reserved: RampAmount, val free: RampAmount)
+data class MerchantFloatDto(
+    val balance: RampAmount,
+    val reserved: RampAmount,
+    val free: RampAmount,
+    /** The part of [reserved] that open float withdrawals hold (2026-11-24). */
+    val withdrawing: RampAmount? = null,
+)
 
 @Serializable
 data class MerchantPaymentsDto(

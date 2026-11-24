@@ -169,6 +169,8 @@ The ramp's staff routes, under `/v1/ops/ramp` inside `networkFiltered { }`, thro
 
 Counting: `completed` orders are counted on the day they completed, the others on the day they were made; `orders` is their sum and `successRatePercent` is completed out of it (`"0"` with none). `online` is the merchant's trading window.
 
+**Float withdrawals (2026-11-24; ramp.md → "As built: float withdrawals").** `GET /ramp/merchants/{merchantId}/withdrawals?network=&limit=` (`ramp.read`, `?network=` required) → `{ withdrawals: [ { withdrawalId, state, amount, blockchain, destinationAddress, destinationLabel, txHash, explorerUrl, failureReason, createdAt, updatedAt, closedAt } ], destinations: [ { destinationId, label, address, blockchain, createdAt, usableAt, removedAt } ] }`, newest first. `state`: `REQUESTED`, `SENT`, `COMPLETED`, `FAILED`. `ramp.merchant_not_found` (404). The ramp settings (RO5) carry `withdrawDestinationDelayHours`, `withdrawMinMinor` and `withdrawDailyMaxMinor` (USDC minor units as strings; `"0"`: no cap), audited by name in `ramp_settings.update`. The sends themselves run in the ops process inside `ramp.release`.
+
 ## Ramp: the merchant engine (decision 2026-11-23)
 
 The engine's staff routes, under `/v1/ops/ramp` inside `networkFiltered { }`, in a controller of their own (`rampEngineController`), through a second contract in `ramp:api`, `RampEngineAdmin` (ramp.md → "As built: the merchant engine" has the formulas, the defaults and the JSON). Reads need `ramp.read` (FINANCE, ADMIN); writes need `ramp.manage` (ADMIN), a reason and an `Idempotency-Key`, and are audited: `ramp_engine_settings.update` on the new target `ramp_engine_settings` (target id `<NETWORK>:<DIRECTION>`), and `ramp_merchant.tier` on `ramp_merchant`.
